@@ -1,7 +1,7 @@
 #! /usr/bin/env ruby
 # -*- ruby -*-
 
-PATH = [
+PATH = ENV['PATH'] = [
   File.expand_path(File.join(__dir__, 'internal')),
   ENV['PATH']
 ].join(':')
