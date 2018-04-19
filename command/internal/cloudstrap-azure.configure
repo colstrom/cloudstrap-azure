@@ -92,7 +92,7 @@ Do you want to run the initial setup? This will create several files in the
 current directory, including encryption keys and configuration files.
 ")
 
-    InitialSetup.call if Confirm.("Write files to #{Bold.(Dir.pwd)}?")
+    Confirm.("Write files to #{Bold.(Dir.pwd)}?") ? InitialSetup.call : abort
   end
 rescue Interrupt, TTY::Reader::InputInterrupt
   exit Errno::EINTR::Errno
