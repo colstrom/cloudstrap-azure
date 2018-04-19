@@ -1,0 +1,37 @@
+#+TITLE: cloudstrap-azure
+#+LATEX: \pagebreak
+
+* Overview
+
+  ~cloudstrap-azure~ deploys SCF to ACS.
+
+* Prerequisites
+
+  - Logged in to Azure via ~az login~ at least once.
+
+* Commands
+
+** cloudstrap-azure environment
+
+   Deals with authentication for the Azure and Microsoft Graph services.
+
+   - Given no arguments, prints JSON containing access tokens to STDOUT.
+   - Given some arguments, sets up an environment containing access tokens, then execs into its arguments.
+
+** cloudstrap-azure configure
+
+   An interactive configuration tool for ~cloudstrap-azure~. Requires access
+   tokens in the environment, as produced by the ~environment~ command.
+
+** cloudstrap-azure deploy
+
+   A tool for deploying SCF on ACS. Requires access tokens and configuration.
+
+* License
+
+  ~cloudstrap-azure~ is available under the [[https://tldrlegal.com/license/mit-license][MIT License]]. See ~LICENSE.txt~ for the
+  full text.
+
+* Contributors
+
+  - [[https://colstrom.github.io/][Chris Olstrom]] | [[mailto:chris@olstrom.com][e-mail]] | [[https://twitter.com/ChrisOlstrom][Twitter]]
