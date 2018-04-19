@@ -1,0 +1,201 @@
+#! /usr/bin/env ruby -W0
+# coding: utf-8
+# -*- ruby -*-
+
+require 'securerandom' # Ruby Standard Library
+require 'yaml'         # Ruby Standard Library
+
+require 'azure_mgmt_container_service' # MIT License
+require 'azure_mgmt_subscriptions'     # MIT License
+require 'chamber'                      # MIT License
+require 'chronic'                      # MIT License
+require 'pastel'                       # MIT License
+require 'sshkey'                       # MIT License
+require 'tty-prompt'                   # MIT License
+require 'uuid'                         # MIT License
+require 'xxhash'                       # MIT License
+
+####################
+# Helper Functions #
+####################
+
+ConstantsToHash = (
+  ->(object) {
+    object.constants.zip(
+      object.constants.map { |constant|
+        object.const_get(
+          constant) }).to_h })
+
+SelectFromMenu = (
+  ->(question, choices, default: nil) {
+    TTY::Prompt.new.select(question, filter: true) { |menu|
+      (choices.is_a?(Hash) ? choices : choices.zip(choices).to_h).each { |text, value| menu.choice(text, value) }
+      (choices.is_a?(Hash) ? choices.values : choices).index(default).tap { |index| menu.default(1+index) if index }}})
+
+Ask = (
+  ->(question, default: nil) {
+    TTY::Prompt.new.ask(question) { |ask|  ask.default(default) if default }})
+
+AskDate = (
+  ->(question, default: nil) {
+    (Chronic.parse(Ask.(question, default: default)) || AskDate.(question, default: default)).utc })
+
+AskSecret = (
+  ->(question, default: nil) {
+    TTY::Prompt.new.mask(question) { |ask| ask.default(default) if default }})
+
+Slider = (
+  ->(question, **options) {
+    TTY::Prompt.new.slider(question, options) })
+
+Confirm = (
+  ->(question) {
+    TTY::Prompt.new.yes?(question)})
+
+Warn = (
+  ->(message) {
+    TTY::Prompt.new.warn(message)})
+
+Error = (
+  ->(message) {
+    TTY::Prompt.new.error(message)})
+
+Bold = (
+  ->(string) {
+    Pastel.new.bold(string)})
+
+InitialSetup = -> {
+  File.write('settings.yml', '---')
+  %x(chamber init)
+  Chamber.load}
+
+#################
+# Sanity Checks #
+#################
+
+PROGRAM = "cloudstrap-azure"
+
+ENV.fetch('MANAGEMENT_AZURE_COM_ACCESS_TOKEN') {
+  Error.("Access Token for #{Bold.('management.azure.com')} not found in Environment
+
+If you have already logged in to Azure using the #{Bold.('az login')} command,
+you can use #{Bold.(PROGRAM)}'s environment wrapper:
+")
+  STDERR.puts Bold.("#{PROGRAM} environment -- #{PROGRAM} configure\n")
+  exit Errno::EINVAL::Errno}
+
+begin
+  unless File.exist?('settings.yml')
+    Warn.("It looks like this is your first time running #{Bold.(PROGRAM)}.
+
+Do you want to run the initial setup? This will create several files in the
+current directory, including encryption keys and configuration files.
+")
+
+    InitialSetup.call if Confirm.("Write files to #{Bold.(Dir.pwd)}?")
+  end
+rescue Interrupt, TTY::Reader::InputInterrupt
+  exit Errno::EINTR::Errno
+end
+
+#############
+# Constants #
+#############
+
+ORCHESTRATOR_TYPES = (
+  ConstantsToHash.(
+      Azure::ContainerService::Mgmt::V2017_01_31::Models::ContainerServiceOrchestratorTypes))
+
+VM_SIZES = (
+  ConstantsToHash.(
+      Azure::ContainerService::Mgmt::V2017_01_31::Models::ContainerServiceVMSizeTypes))
+
+AzureSubscriptionsAPI = (
+  ::Azure::Subscriptions::Mgmt::V2016_06_01::SubscriptionClient.new(
+    ::MsRest::TokenCredentials.new(
+      ENV.fetch('MANAGEMENT_AZURE_COM_ACCESS_TOKEN'))))
+
+AvailableSubscriptions = (
+  ->(client) {
+    client
+      .subscriptions
+      .list
+      .map { |subscription| [subscription.display_name, subscription.subscription_id] }
+      .to_h })
+
+AvailableTenants = (
+  ->(client) {
+    client
+      .tenants
+      .list
+      .map(&:tenant_id) })
+
+AvailableLocations = (
+  ->(client, subscription_id) {
+    client
+      .subscriptions
+      .list_locations(subscription_id)
+      .value
+      .map { |location| [location.display_name, location.name] }
+      .to_h })
+
+DEFAULTS = {
+  'tenant_id'               => ENV['AZURE_TENANT_ID'],
+  'subscription_id'         => ENV['AZURE_SUBSCRIPTION_ID'],
+  'location'                => 'westus',
+  'orchestrator_type'       => 'Kubernetes',
+  'vm_size'                 => 'Standard_D2_v2',
+  'role_definition'         => 'Contributor',
+  'admin_username'          => 'scf-admin',
+  'agent_count'             => 3,
+  'deployment_name'         => 'cloudstrap',
+  'master_dns_suffix'       => 'master',
+  'agent_dns_suffix'        => 'agent',
+  'uuid'                    => UUID.generate,
+  'credential_end_date'     => 'two weeks from now',
+  '_secure_ssh_private_key' => SSHKey.generate.private_key,
+  '_secure_password'        => SecureRandom.uuid,
+}
+
+LOADED = DEFAULTS.merge(Chamber.env.to_hash)
+
+SECRETS = Set.new(Chamber.env.securable.keys)
+SECRETS.each { |key| LOADED["_secure_#{key}"] = LOADED.delete(key) }
+
+################
+# Main Program #
+################
+
+begin
+  subscription_id = SelectFromMenu.('Subscription ID:',   AvailableSubscriptions.(AzureSubscriptionsAPI), default: LOADED['subscription_id'])
+
+  INTERACTIVE = {
+    'tenant_id'               => SelectFromMenu.('Tenant ID:',         AvailableTenants.(AzureSubscriptionsAPI),                    default: LOADED['tenant_id']),
+    'location'                => SelectFromMenu.('Location:',          AvailableLocations.(AzureSubscriptionsAPI, subscription_id), default: LOADED['location']),
+    'orchestrator_type'       => SelectFromMenu.('Orchestrator Type:', ORCHESTRATOR_TYPES,                                          default: LOADED['orchestrator_type']),
+    'vm_size'                 => SelectFromMenu.('VM Size:',           VM_SIZES,                                                    default: LOADED['vm_size']),
+    'agent_count'             => Slider.('Agent Count:', min: 1, max: 5, step: 2),
+    'uuid'                    => Ask.('UUID',                      default: LOADED['uuid']),
+    'deployment_name'         => Ask.('Deployment Name:',          default: LOADED['deployment_name']),
+    'role_definition'         => Ask.('Role Definition:',          default: LOADED['role_definition']),
+    'admin_username'          => Ask.('Admin Username:',           default: LOADED['admin_username']),
+    'master_dns_suffix'       => Ask.('Master DNS Suffix:',        default: LOADED['master_dns_suffix']),
+    'agent_dns_suffix'        => Ask.('Agent DNS Suffix:',         default: LOADED['agent_dns_suffix']),
+    '_secure_password'        => AskSecret.('Password:',           default: LOADED['_secure_password']),
+    '_secure_ssh_private_key' => AskSecret.('SSH Private Key:',    default: LOADED['_secure_ssh_private_key']),
+    'credential_end_date'     => AskDate.('Password Valid Until:', default: LOADED['credential_end_date']),
+  }.merge({'subscription_id'  => subscription_id})
+
+  FINAL = LOADED.merge INTERACTIVE
+  FINAL['identifier']          = [FINAL['deployment_name'], FINAL['uuid']].join('.')
+  FINAL['dns_prefix']          = [FINAL['deployment_name'], XXhash.xxh32(FINAL['identifier'])].join('-')
+  FINAL['credential_end_date'] = Chronic.parse(FINAL['credential_end_date'].iso8601).utc.iso8601
+
+  yaml   = YAML.dump Chamber.instance.encrypt(FINAL.reject { |_, v| v.nil? }.sort.to_h)
+  saving = File.expand_path(File.join(Dir.pwd, 'settings.yml'))
+
+  puts Pastel.new.bold "\n#{yaml}"
+  File.write(saving, yaml) if Confirm.("Save to #{saving}?")
+rescue Interrupt, TTY::Reader::InputInterrupt
+  exit Errno::EINTR::Errno
+end
