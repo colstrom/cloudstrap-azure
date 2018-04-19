@@ -18,6 +18,7 @@ Gem::Specification.new do |gem|
   gem.executables   = `git ls-files -z -- command/*`.split("\x0").map { |f| File.basename(f) }
 
   gem.require_paths = ['lib']
+  gem.bindir        = 'command'
 
   gem.add_runtime_dependency 'azure_graph_rbac',             '~> 0.16', '>= 0.16.0'
   gem.add_runtime_dependency 'azure_mgmt_authorization'      '~> 0.17', '>= 0.17.0'
