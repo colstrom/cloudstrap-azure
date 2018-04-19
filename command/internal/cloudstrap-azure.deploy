@@ -1,0 +1,478 @@
+#! /usr/bin/env ruby -W0
+# coding: utf-8
+# -*- ruby -*-
+
+require 'time' # Ruby Standard Library
+
+require 'azure_graph_rbac'             # MIT License
+require 'azure_mgmt_authorization'     # MIT License
+require 'azure_mgmt_compute'           # MIT License
+require 'azure_mgmt_container_service' # MIT License
+require 'azure_mgmt_network'           # MIT License
+require 'azure_mgmt_resources'         # MIT License
+require 'chamber'                      # MIT License
+require 'concurrent'                   # MIT License
+require 'pastel'                       # MIT License
+require 'sshkey'                       # MIT License
+require 'tty-prompt'                   # MIT License
+require 'tty-spinner'                  # MIT License
+
+#############
+# Constants #
+#############
+
+CREDENTIALS = {
+  'https://graph.windows.net' => (
+    MsRest::TokenCredentials.new(
+      ENV.fetch('GRAPH_WINDOWS_NET_ACCESS_TOKEN'))),
+  'https://management.azure.com' => (
+    MsRest::TokenCredentials.new(
+      ENV.fetch('MANAGEMENT_AZURE_COM_ACCESS_TOKEN'))),
+}
+
+SUBSCRIPTION_ID = Chamber.env.subscription_id
+TENANT_ID       = Chamber.env.tenant_id
+LOCATION        = Chamber.env.location
+
+SPINNER_FORMAT  = (Chamber.env[:spinner] || :arrow_pulse).to_sym
+
+ENABLE_SWAP_ACCOUNTING = %q{sudo sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT=\"console=tty1 console=ttyS0 earlyprintk=ttyS0 rootdelay=300\"/GRUB_CMDLINE_LINUX_DEFAULT=\"console=tty1 console=ttyS0 earlyprintk=ttyS0 rootdelay=300 swapaccount=1\"/g' /etc/default/grub.d/50-cloudimg-settings.cfg}
+UPDATE_GRUB = %q{sudo update-grub}
+
+####################
+# Helper Functions #
+####################
+
+Nothing            = ->(*)                      { nil }
+StateEnabled       = ->(object)                 { 'Enabled' == object.state }
+FirstIfOnly        = ->(list)                   { list.first if (1 == list.size) }
+Properties         = ->(*properties)            { ->(object) { properties.map(&Property).map { |ƒ| ƒ.(object) } } }
+SelectFromMenu     = ->(title, choices)         { TTY::Prompt.new.select(title, filter: true) { |menu| choices.each { |choice| menu.choice(*choice) }}}
+Property           = ->(property, object)       { object.public_send(property) if object.respond_to?(property) }.curry
+RespondsTo         = ->(method, object)         { object.respond_to?(method) }.curry
+SendTo             = ->(object, *args)          { object.public_send(*args) }.curry(2)
+Bind               = ->(name, value, object)    { object.tap { SendTo.(object, "#{name}=", value) } }.curry
+Bindable           = ->(name, object)           { RespondsTo.("#{name}=", object) }.curry
+BindConstant       = ->(namespace, name, value) { namespace.const_set name, value }.curry
+BindConstants      = ->(namespace, interfaces)  { interfaces.map { |constant, function| BindConstant.(namespace, constant, function) } }.curry
+Itself             = ->(object) { object.itself }
+If                 = ->(predicate, consequent, alternative = Nothing) {
+  ->(*arguments) {
+    predicate.(*arguments) ? consequent.(*arguments) : alternative.(*arguments) } }
+ApplyIf            = ->(predicate, consequent) { If.(predicate, consequent, Itself) }
+
+WhileSpinning = lambda do |message, &block|
+  Concurrent::IVar.new.tap do |ivar|
+    TTY::Spinner.new("[:spinner] #{message}", format: SPINNER_FORMAT).tap do |spinner|
+      spinner.auto_spin
+      ivar.set block.call
+    end.success
+  end.value
+end
+
+BindLocation       = Bind.(:location, LOCATION)
+
+AsyncableMethods = ->(object) {
+  candidates = object.methods.map(&:to_s)
+
+  candidates
+    .select { |c| candidates.any? { |m| m == "#{c}_async" } }
+    .reject { |c| c.start_with? 'begin_' }
+    .reject { |c| c.end_with? '_next' }
+    .map    { |c| object.method(c) }
+}
+
+MethodsReturningSiblings = ->(object) {
+  object
+    .methods
+    .map    { |method| object.method(method) }
+    .select { |method| method.arity.zero? }
+    .select { |method| method.owner == object.class }
+    .select { |method| ParentClass.(method.call) == ParentClass.(object) }
+}
+
+Ancestors         = ->(object) { ClassOf.(object).ancestors }
+ClassName         = ->(object) { ClassOf.(object).name }
+ClassNameParts    = ->(object) { ClassName.(object).split('::') }
+ClassOf           = ->(object) { object.is_a?(Class) ? object : ClassOf.(object.class) }
+FormatMethodName  = ->(method) { method.name.to_s.split('_').map(&:capitalize).join }
+InstanceMethods   = ->(object) { ClassOf.(object).instance_methods(false).map(&InstanceMethod.(object)) }
+InstanceOf        = ->(object) { object.instance_of?(ClassOf.(object)) ? object : ClassOf.(object).new }
+OwnClass          = ->(object) { ClassNameParts.(object).last }
+ParentClass       = ->(object) { ClassNameParts.(object).reverse.drop(1).reverse.join('::') }
+RequiredArguments = ->(method) { method.parameters.count { |type, _| type == :req } }
+
+HasAncestor       = ->(ancestor, object)   { Ancestors.(object).include?(ancestor) }.curry
+HasInstanceMethod = ->(method, object)     { InstanceMethods.(object).any? { |m| m.name == method.to_sym } }.curry
+InstanceMethod    = ->(object, method)     { ClassOf.(object).instance_method(method) }.curry
+IsDescendentOf    = ->(ancestor, object)   { HasAncestor.(ancestor, object) and ClassOf.(ancestor) != ClassOf.(object) }.curry
+
+AvailableCredentials = ->(client) { true if CredentialsFor.(InstanceOf.(client).base_url) }
+AzureServiceName     = ->(object) { ClassNameParts.(object).drop(1).first }
+BindCredentials      = ->(client) { Bind.(:credentials, CredentialsFor.(client.base_url), client) }
+CredentialsFor       = ->(domain) { CREDENTIALS[domain] }
+
+LatestServiceVersion = ->(_service, versions) { versions.sort_by(&:name).last }
+
+Constants = ->(namespace) {
+  [
+    namespace,
+    namespace
+      .constants
+      .map    { |c| namespace.const_get c }
+      .select { |c| c.respond_to? :constants }
+      .map(&Constants)
+  ]
+    .flatten
+    .sort_by(&:to_s)
+    .uniq
+}
+
+Bold = ->(string) { Pastel.new.bold(string) }
+Red  = ->(string) { Pastel.new.red(string) }
+Blue = ->(string) { Pastel.new.blue(string) }
+
+UsageHelp = ->(method) {
+    [method.name,
+     method.parameters.map do |type, name|
+       case type
+       when :req    then "<#{name}>"
+       when :opt    then "[#{name}]"
+       when :keyreq then "<#{name}:>"
+       when :key    then "[#{name}:]"
+       end
+     end]
+      .flatten
+      .join(' ')
+}
+
+UsageError = ->(method, exception) {
+  STDERR.puts(
+    Red.("#{Bold.(exception.class.name)}: #{exception.message}"))
+  STDERR.puts(
+    Blue.("#{Bold.('Usage')}: #{UsageHelp.(method)}"))
+}
+
+BindOperation = ->(namespace, operation) {
+  constant = FormatMethodName.(operation)
+  namespace.const_set(constant, operation)
+  namespace.define_singleton_method(operation.name) do |*args|
+    operation.call(*args)
+  rescue ArgumentError => error
+    UsageError.(operation, error)
+  end
+}.curry
+
+AddConstantCalls = ->(namespace, blacklist: []) {
+  namespace
+    .constants
+    .reject { |constant| namespace.singleton_methods.include?(constant) }
+    .reject { |constant| blacklist.include?(constant) }
+    .map { |constant| namespace.define_singleton_method(constant) do |*args|
+             namespace.const_get(constant).call(*args)
+           rescue ArgumentError => error
+             UsageError.(namespace.const_get(constant), error)
+           end}}
+
+AddInteractiveCalls = ->(namespace, **options) {
+  AddConstantCalls.(namespace, **options)
+  return :call if namespace.singleton_methods.include?(:call)
+
+  namespace.define_singleton_method(:call) do |*args|
+    namespace.singleton_method(
+      SelectFromMenu.(namespace.name, namespace.singleton_methods.select { |method| method =~ /^[[:upper:]]/ })
+    ).call(*args)
+  rescue TTY::Reader::InputInterrupt
+    puts
+    namespace
+  end
+}
+
+BindInterface = ->(namespace, interface) {
+  context = namespace.const_set(FormatMethodName.(interface), Module.new)
+  AsyncableMethods.(interface.call).map(&BindOperation.(context))
+  AddInteractiveCalls.(context)
+}.curry
+
+BindService   = ->(namespace, service) {
+  context = namespace.const_set(AzureServiceName.(service), Module.new)
+  models = context.const_set('Models', ServiceModels.(service))
+  context.define_singleton_method(:Models) { |*args| models.const_get(SelectFromMenu.("#{context.name}::Models", models.constants)).new(*args) }
+  MethodsReturningSiblings.(service).map(&BindInterface.(context))
+  AddInteractiveCalls.(context, blacklist: [:Models])
+}.curry
+
+ServiceModels = ->(service) { Kernel.const_get(ParentClass.(service) + '::Models') }
+
+BindSubscriptionID = Bind.(:subscription_id, SUBSCRIPTION_ID)
+BindTenantID       = Bind.(:tenant_id, TENANT_ID)
+
+########################
+# Deployment Functions #
+########################
+
+FindResourceGroup = ->(name) {
+  AzureAPI::Resources::ResourceGroups
+    .list
+    .find { |resource_group| resource_group.id == "/subscriptions/#{SUBSCRIPTION_ID}/resourceGroups/#{name}" }}
+
+CreateResourceGroup = ->(name) {
+  AzureAPI::Resources::ResourceGroups.create_or_update(
+    name,
+    AzureAPI::Resources::Models::ResourceGroup.new.tap do |resource_group|
+      resource_group.location = LOCATION
+    end)}
+
+FindApplication = ->(display_name) {
+  AzureAPI::GraphRbac::Applications
+    .list
+    .find { |application| application.display_name == display_name }}
+
+CreateApplication = ->(display_name) {
+  AzureAPI::GraphRbac::Applications.create(
+    AzureAPI::GraphRbac::Models::ApplicationCreateParameters.new.tap do |application|
+      application.available_to_other_tenants = false
+      application.display_name               = display_name
+      application.identifier_uris            = ["http://#{display_name}"]
+    end)}
+
+FindServicePrincipal = ->(application) {
+  AzureAPI::GraphRbac::ServicePrincipals
+    .list
+    .find { |service_principal| service_principal.app_id == application.app_id }}
+
+CreateServicePrincipal = ->(application) {
+  AzureAPI::GraphRbac::ServicePrincipals.create(
+    AzureAPI::GraphRbac::Models::ServicePrincipalCreateParameters.new.tap do |service_principal|
+      service_principal.account_enabled = true
+      service_principal.app_id          = application.app_id
+    end)}
+
+FindRoleDefinition = ->(role_name) {
+  AzureAPI::Authorization::RoleDefinitions
+    .list("/subscriptions/#{SUBSCRIPTION_ID}")
+    .find { |role_definition| role_definition.role_name == role_name }}
+
+FindRoleAssignment = ->(name) {
+  AzureAPI::Authorization::RoleAssignments
+    .list
+    .find { |role_assignment| role_assignment.name == name }}
+
+CreateRoleAssignment = ->(role_definition, service_principal, resource_group) {
+  AzureAPI::Authorization::RoleAssignments.create(
+    resource_group.id,
+    Chamber.env.uuid,
+    AzureAPI::Authorization::Models::RoleAssignmentCreateParameters.new.tap do |role_assignment|
+      role_assignment.role_definition_id = role_definition.id
+      role_assignment.principal_id       = service_principal.object_id
+    end)}
+
+UpdatePassword = ->(service_principal, password) {
+  AzureAPI::GraphRbac::ServicePrincipals.update_password_credentials(
+    service_principal.object_id,
+    AzureAPI::GraphRbac::Models::PasswordCredentialsUpdateParameters.new.tap { |update|
+      update.value = [AzureAPI::GraphRbac::Models::PasswordCredential.new.tap { |credential|
+                        credential.value    = password
+                        credential.end_date = Time.parse(
+                          Chamber.env.credential_end_date).to_datetime}]})}
+
+FindContainerService = ->(resource_group) {
+  AzureAPI::ContainerService::ContainerServices
+    .list_by_resource_group(resource_group.name)
+    .find { |container_service| container_service.name == Chamber.env.identifier }}
+
+CreateContainerService = ->(service_principal, resource_group) {
+  AzureAPI::ContainerService::ContainerServices.create_or_update(
+    resource_group.name,
+    Chamber.env.identifier,
+    AzureAPI::ContainerService::Models::ContainerService.new.tap { |container_service|
+      container_service.agent_pool_profiles = [
+        AzureAPI::ContainerService::Models::ContainerServiceAgentPoolProfile.new.tap { |agent_pool_profile|
+          agent_pool_profile.count = (
+            Chamber.env.agent_count)
+          agent_pool_profile.dns_prefix = (
+            [Chamber.env.dns_prefix, Chamber.env.agent_dns_suffix]
+              .join('-'))
+          agent_pool_profile.name = (
+            Chamber.env.identifier)
+          agent_pool_profile.vm_size = (
+            Chamber.env.vm_size)}]
+      container_service.linux_profile = (
+        AzureAPI::ContainerService::Models::ContainerServiceLinuxProfile.new.tap { |linux_profile|
+          linux_profile.admin_username = (
+            Chamber.env.admin_username)
+          linux_profile.ssh = (
+            AzureAPI::ContainerService::Models::ContainerServiceSshConfiguration.new.tap { |ssh|
+              ssh.public_keys = [
+                AzureAPI::ContainerService::Models::ContainerServiceSshPublicKey.new.tap { |public_key|
+                  public_key.key_data = (
+                    SSHKey.new(Chamber.env.ssh_private_key).ssh_public_key)}]})})
+      container_service.location       = Chamber.env.location
+      container_service.master_profile = (
+        AzureAPI::ContainerService::Models::ContainerServiceMasterProfile.new.tap { |master_profile|
+          master_profile.dns_prefix = [Chamber.env.dns_prefix, Chamber.env.master_dns_suffix].join('-')})
+      container_service.orchestrator_profile   = (
+        AzureAPI::ContainerService::Models::ContainerServiceOrchestratorProfile.new.tap { |orchestrator_profile|
+          orchestrator_profile.orchestrator_type = Chamber.env.orchestrator_type})
+      container_service.service_principal_profile = (
+        AzureAPI::ContainerService::Models::ContainerServiceServicePrincipalProfile.new.tap { |service_principal_profile|
+          service_principal_profile.client_id = service_principal.app_id
+          service_principal_profile.secret    = Chamber.env.password})})}
+
+FindVirtualMachines = ->(resource_group) {
+  AzureAPI::Compute::VirtualMachines
+    .list(resource_group.name)}
+
+FindVirtualMachine = ->(virtual_machine_name, resource_group) {
+  AzureAPI::Compute::VirtualMachines
+    .list(resource_group.name)
+    .find { |virtual_machine| virtual_machine.name == virtual_machine_name }}
+
+KubernetesAgents = ->(resource_group) {
+  FindVirtualMachines
+    .(resource_group)
+    .select { |vm| vm.tags['orchestrator'] =~ /^Kubernetes:/ }
+    .select { |vm| vm.tags['poolName']     == 'agent' }}
+
+# FIXME: Bad mojo of there's more than one cluster.
+KubernetesMaster = ->(resource_group) {
+  FindVirtualMachines
+    .(resource_group)
+    .select { |vm| vm.tags['orchestrator'] =~ /^Kubernetes:/ }
+    .find { |vm| vm.tags['poolName']     == 'master' }}
+
+RunShellScripts = ->(scripts, resource_group, virtual_machine) {
+  AzureAPI::Compute::VirtualMachines.run_command(
+    resource_group.name,
+    virtual_machine.name,
+    AzureAPI::Compute::Models::RunCommandInput.new.tap { |input|
+      input.command_id = 'RunShellScript'
+      input.script     = scripts
+    })}.curry
+
+RunShellScript = ->(script, *rest) { RunShellScripts.([script], *rest) }
+RestartVirtualMachine = ->(resource_group, virtual_machine) { AzureAPI::Compute::VirtualMachines.restart(resource_group.name, virtual_machine.name) }.curry
+
+FindPublicIPv4 = ->(resource_group) {
+  AzureAPI::Network::PublicIpaddresses
+    .list(resource_group.name)
+    .find { |public_ip_address| public_ip_address.name == Chamber.env.identifier }}
+
+CreatePublicIPv4 = ->(resource_group) {
+  AzureAPI::Network::PublicIpaddresses.create_or_update(
+    resource_group.name,
+    Chamber.env.identifier,
+    AzureAPI::Network::Models::PublicIPAddress.new.tap { |public_ip_address|
+      public_ip_address.location                   = Chamber.env.location
+      public_ip_address.public_ipaddress_version   = 'IPv4'
+      public_ip_address.public_ipallocation_method = 'Static'
+    })}
+
+KubernetesMasterSecurityGroup = ->(resource_group) {
+  name = [*KubernetesMaster.(resource_group).name.split('-').first(3), 'nsg'].join('-')
+  AzureAPI::Network::NetworkSecurityGroups
+    .list(resource_group.name)
+    .find { |network_security_group| network_security_group.name == name }}
+
+FindSecurityRule = ->(network_security_group) {
+  network_security_group
+    .security_rules
+    .find { |security_rule| security_rule.name == Chamber.env.identifier }
+}
+
+CreateSecurityRule = ->(network_security_group, resource_group) {
+  AzureAPI::Network::SecurityRules.create_or_update(
+    resource_group.name,
+    network_security_group.name,
+    Chamber.env.identifier,
+    AzureAPI::Network::Models::SecurityRule.new.tap { |security_rule|
+      security_rule.access                     = 'Allow'
+      security_rule.destination_address_prefix = '*'
+      security_rule.destination_port_ranges    = [80,443,4443,2222,2793]
+      security_rule.direction                  = AzureAPI::Network::Models::SecurityRuleDirection::Inbound
+      security_rule.priority                   = network_security_group.security_rules.map(&:priority).max.next
+      security_rule.protocol                   = 'Tcp'
+      security_rule.source_address_prefix      = '*'
+      security_rule.source_port_range          = '*'})}
+
+UpdateVirtualMachine = ->(virtual_machine, resource_group) {
+  AzureAPI::Compute::VirtualMachines.create_or_update(
+    resource_group.name,
+    virtual_machine.name,
+    virtual_machine)}
+
+ApplyTag = ->(key, value, resource_group, virtual_machine) {
+  UpdateVirtualMachine.(virtual_machine.tap { virtual_machine.tags[key] = value }, resource_group)}
+
+EnableSwapAccounting = ->(resource_group, virtual_machine) {
+  return if virtual_machine.tags['cloudstrap.swap_accounting'] == 'enabled'
+  RunShellScripts.([ENABLE_SWAP_ACCOUNTING, UPDATE_GRUB], resource_group, virtual_machine)
+  ApplyTag.('cloudstrap.swap_accounting', 'enabled', resource_group, virtual_machine)}.curry
+
+RebootOnce = ->(resource_group, virtual_machine) {
+  return if virtual_machine.tags['cloudstrap.reboot'] == 'finished'
+  ApplyTag.('cloudstrap.reboot', 'started', resource_group, virtual_machine)
+  RestartVirtualMachine.(resource_group, virtual_machine)
+  ApplyTag.('cloudstrap.reboot', 'finished', resource_group, vritual_machine)}.curry
+
+FindNetworkInterface = ->(resource_group) {
+  virtual_machine = KubernetesAgents.(resource_group).sort_by(&:name).first
+  AzureAPI::Network::NetworkInterfaces
+    .list(resource_group.name)
+    .find { |network_interface| network_interface.virtual_machine.id.end_with?(virtual_machine.name)}}
+
+AssociatePublicIP = ->(resource_group, network_interface, public_ip_address) {
+  AzureAPI::Network::NetworkInterfaces.create_or_update(
+    resource_group.name,
+    network_interface.name,
+    network_interface.tap {
+      network_interface.ip_configurations[0].public_ipaddress = public_ip_address})}
+
+################
+# Main Program #
+################
+
+WhileSpinning.('Constructing Library') do
+  AzureAPI = Module.new
+  Constants
+    .(Azure)
+    .select(&IsDescendentOf.(MsRestAzure::AzureServiceClient))
+    .select(&AvailableCredentials)
+    .group_by(&AzureServiceName)
+    .map(&LatestServiceVersion)
+    .map(&InstanceOf)
+    .map(&ApplyIf.(Bindable.(:credentials),     BindCredentials))
+    .map(&ApplyIf.(Bindable.(:tenant_id),       BindTenantID))
+    .map(&ApplyIf.(Bindable.(:subscription_id), BindSubscriptionID))
+    .each(&BindService.(AzureAPI))
+
+  AddInteractiveCalls.(AzureAPI)
+end
+
+role_definition        = WhileSpinning.('Find Role Definition')          { FindRoleDefinition.(Chamber.env.role_definition) }
+resource_group         = WhileSpinning.('Find/Create Resource Group')    { FindResourceGroup.(Chamber.env.identifier)       || CreateResourceGroup.(Chamber.env.identifier) }
+application            = WhileSpinning.('Find/Create Application')       { FindApplication.(Chamber.env.identifier)         || CreateApplication.(Chamber.env.identifier) }
+service_principal      = WhileSpinning.('Find/Create Service Principal') { FindServicePrincipal.(application)               || CreateServicePrincipal.(application) }
+
+WhileSpinning.('Update Password for Service Principal')                  { UpdatePassword.(service_principal, Chamber.env.password) }
+
+role_assignment        = WhileSpinning.('Find/Create Role Assignment')   { FindRoleAssignment.(Chamber.env.uuid)            || CreateRoleAssignment.(role_definition, service_principal, resource_group) }
+public_ip_address      = WhileSpinning.('Find/Create Public IP Address') { FindPublicIPv4.(resource_group)                  || CreatePublicIPv4.(resource_group) }
+container_service      = WhileSpinning.('Find/Create Container Service') { FindContainerService.(resource_group)            || CreateContainerService.(service_principal, resource_group) }
+
+network_security_group = WhileSpinning.('Find Network Security Group')   { KubernetesMasterSecurityGroup.(resource_group) }
+security_rule          = WhileSpinning.('Find/Create Security Rule')     { FindSecurityRule.(network_security_group)        || CreateSecurityRule.(network_security_group, resource_group) }
+
+network_interface      = WhileSpinning.('Find Network Interface')        { FindNetworkInterface.(resource_group) }
+AssociatePublicIP.(resource_group, network_interface, public_ip_address)
+
+WhileSpinning.('Configuring Swap Accounting') do
+  KubernetesAgents
+    .(resource_group)
+    .each(&EnableSwapAccounting.(resource_group))
+    .each(&RebootOnce.(resource_group))
+end
+
+def api(*args)
+  AzureAPI.call(*args)
+end
