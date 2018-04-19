@@ -75,6 +75,7 @@ env = %w(management.azure.com graph.windows.net).map do |resource|
                   CommandInPath.('az')),
               'account',
               'get-access-token',
+              '--output=json',
               '--resource',
               Resource.(
                 resource)))) ||
