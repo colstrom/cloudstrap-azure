@@ -1,21 +1,21 @@
 Gem::Specification.new do |gem|
   tag = `git describe --tags --abbrev=0`.chomp
 
-  gem.name        = 'cloudstrap-azure'
-  gem.homepage    = 'https://github.com/colstrom/cloudstrap-azure'
-  gem.summary     = 'Cloudstrap for Azure'
+  gem.name          = 'cloudstrap-azure'
+  gem.homepage      = 'https://github.com/colstrom/cloudstrap-azure'
+  gem.summary       = 'Cloudstrap for Azure'
 
-  gem.version     = "#{tag}.pre"
-  gem.licenses    = ['MIT']
-  gem.authors     = ['Chris Olstrom']
-  gem.email       = 'chris@olstrom.com'
+  gem.version       = "#{tag}.pre"
+  gem.licenses      = ['MIT']
+  gem.authors       = ['Chris Olstrom']
+  gem.email         = 'chris@olstrom.com'
 
   gem.cert_chain    = ['trust/certificates/colstrom.pem']
   gem.signing_key   = File.expand_path ENV.fetch 'GEM_SIGNING_KEY'
 
   gem.files         = `git ls-files -z`.split("\x0")
   gem.test_files    = `git ls-files -z -- {test,spec,features}/*`.split("\x0")
-  gem.executables   = `git ls-files -z -- command/*`.split("\x0").map { |f| File.basename(f) }
+  gem.executables   = `git ls-files -z -- command/[^internal/]*`.split("\x0").map { |f| File.basename(f) }
 
   gem.require_paths = ['lib']
   gem.bindir        = 'command'
