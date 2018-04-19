@@ -1,0 +1,140 @@
+#! /usr/bin/env ruby -W0
+# coding: utf-8
+# -*- ruby -*-
+
+require 'json'     # Ruby Standard Library
+require 'optparse' # Ruby Standard Library
+require 'ostruct'  # Ruby Standard Library
+require 'set'      # Ruby Standard Library
+require 'time'     # Ruby Standard Library
+
+require 'azure_mgmt_subscriptions' # MIT License
+require 'tty-prompt'               # MIT License
+require 'tty-which'                # MIT License
+
+#############
+# Constants #
+#############
+
+NullToken = Struct.new(:accessToken)
+
+####################
+# Helper Functions #
+####################
+
+Or               = ->(first, *rest)    { first || (Or.(*rest) unless rest.empty?) }
+CommandInPath    = ->(command)         { TTY::Which.which(command) }
+Environment      = ->(variable)        { ENV.fetch(variable) { nil } }
+EnvironmentKey   = ->(*strings)        { strings.flatten.join('_').upcase.tr('.', '_') }
+ExpandPath       = ->(*paths)          { File.expand_path(File.join(paths.flatten)) }
+IsExecutable     = ->(file)            { File.executable?(file.to_s) }
+ReadFile         = ->(file)            { File.read(file) if File.exist?(file) }
+RunCommand       = ->(command, *args)  { %x(#{command} #{args.join(' ')}) if IsExecutable.(command) }
+ParseJSON        = ->(json)            { [JSON.parse((json || '[]'), object_class: OpenStruct)].flatten.reject(&:nil?) }
+HasExpiration    = ->(token)           { token.expiresOn }
+ExpirationToTime = ->(token)           { token.expiresOn = Time.parse(token.expiresOn) }
+TokensFromJSON   = ->(json)            { ParseJSON.(json).select(&HasExpiration).each(&ExpirationToTime) }
+Stale            = ->(token)           { token.expiresOn < Time.now }
+Freshest         = ->(tokens)          { tokens.reject(&Stale).sort_by(&:expiresOn).last }
+Resource         = ->(resource)        { "https://#{resource}/" }
+ForResource      = ->(resource, token) { (token.resource == Resource.(resource)) if token.respond_to?(:resource) }.curry
+PrettyJSON       = ->(object)          { object.is_a?(String) ? PrettyJSON.(JSON.parse(string)) : JSON.pretty_generate(object) }
+Warn             = ->(message)         { TTY::Prompt.new.warn message }
+Error            = ->(message)         { TTY::Prompt.new.error message }
+
+################
+# Main Program #
+################
+
+features = Set.new
+
+OptionParser.new do |parser|
+  parser.on('-S', '--with-subscription-id') { features << :subscription_id }
+  parser.on('-T', '--with-tenant-id')       { features << :tenant_id }
+end.parse!
+
+env = %w(management.azure.com graph.windows.net).map do |resource|
+  variable     = EnvironmentKey.(resource, 'ACCESS_TOKEN')
+  access_token = Environment.(variable) || (
+    Freshest.(
+        TokensFromJSON.(
+            ReadFile.(
+                ExpandPath.(
+                    Or.(
+                        Environment.('DOT_AZURE'),
+                        %w(~ .azure)),
+                    'accessTokens.json')))
+          .select(
+            &ForResource.(
+              resource))) ||
+    Freshest.(
+      TokensFromJSON.(
+          RunCommand.(
+              Or.(
+                  Environment.('AZURE_CLI'),
+                  CommandInPath.('az')),
+              'account',
+              'get-access-token',
+              '--resource',
+              Resource.(
+                resource)))) ||
+    NullToken.new
+  ).accessToken
+  [variable, access_token]
+end.to_h
+
+if [:subscription_id, :tenant_id].any? { |feature| features.include?(feature) }
+  ACCESS_TOKEN = MsRest::TokenCredentials.new(env['MANAGEMENT_AZURE_COM_ACCESS_TOKEN'])
+
+  azure = Azure::Subscriptions::Mgmt::V2016_06_01::SubscriptionClient.new(ACCESS_TOKEN)
+
+  begin
+    subscriptions = azure.subscriptions.list
+                      .select { |subscription| subscription.state == 'Enabled' }
+    tenants       = azure.tenants.list
+  rescue MsRestAzure::AzureOperationError => error
+    abort Error.(PrettyJSON.(error.response.body))
+  end
+end
+
+if features.include?(:subscription_id)
+  env['AZURE_SUBSCRIPTION_ID'] = ENV['AZURE_SUBSCRIPTION_ID'] || (
+    case subscriptions.size
+    when 0
+      abort Error.('ERROR: No Subscriptions are Enabled')
+    when 1
+      subscriptions.first.subscription_id
+    else
+      Warn.('Multiple Subscriptions Found')
+      SelectFromMenu.(
+        'Select a Subscription:',
+        subscriptions.map { |subscription| [
+                              subscription.display_name,
+                              subscription.subscription_id]})
+    end)
+end
+
+if features.include? :tenant_id
+  env['AZURE_TENANT_ID'] = ENV['AZURE_TENANT_ID'] || (
+    case tenants.size
+    when 0
+      abort Error.('Error: No Tenants Available')
+    when 1
+      tenants.first.tenant_id
+    else
+      Warn.('Multiple Tenants Found')
+      SelectFromMenu.(
+        'Select a Tenant:',
+        tenants.map(&:tenant_id))
+    end)
+end
+
+env['AZURE_ACCESS_TOKEN'] = env['MANAGEMENT_AZURE_COM_ACCESS_TOKEN']
+
+abort if env.values.any?(&:nil?)
+
+if ARGV.empty?
+  STDOUT.puts PrettyJSON.(env)
+else
+  exec(env, *ARGV)
+end
