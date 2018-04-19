@@ -419,7 +419,7 @@ RebootOnce = ->(resource_group, virtual_machine) {
   return if virtual_machine.tags['cloudstrap.reboot'] == 'finished'
   ApplyTag.('cloudstrap.reboot', 'started', resource_group, virtual_machine)
   RestartVirtualMachine.(resource_group, virtual_machine)
-  ApplyTag.('cloudstrap.reboot', 'finished', resource_group, vritual_machine)}.curry
+  ApplyTag.('cloudstrap.reboot', 'finished', resource_group, virtual_machine)}.curry
 
 FindNetworkInterface = ->(resource_group) {
   virtual_machine = KubernetesAgents.(resource_group).sort_by(&:name).first
