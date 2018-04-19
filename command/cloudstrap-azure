@@ -1,0 +1,13 @@
+#! /usr/bin/env ruby
+# -*- ruby -*-
+
+PATH = [
+  File.expand_path(File.join(__dir__, 'internal')),
+  ENV['PATH']
+].join(':')
+
+PROGRAM = File.basename($PROGRAM_NAME)
+
+abort unless (COMMAND = ARGV.shift)
+
+exec({ 'PATH' => PATH }, "#{PROGRAM}.#{COMMAND}", *ARGV)
