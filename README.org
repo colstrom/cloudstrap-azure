@@ -9,6 +9,61 @@
 
   - Logged in to Azure via ~az login~ at least once.
 
+* Installation
+
+  #+BEGIN_SRC shell
+    gem install cloudstrap-azure --pre
+  #+END_SRC
+
+** Trusted Installation
+
+   =cloudstrap-azure= is cryptographically signed. You can verify that it hasn't
+   been tampered with (and really should, since it acts on your Azure account
+   with your credentials).
+
+   Assuming you have trusted the certificate, you can perform a trusted installation like so:
+
+   #+BEGIN_SRC shell
+     gem install cloudstrap-azure --pre --trust-policy MediumSecurity
+   #+END_SRC
+
+   Using =bundler=, the process is similar:
+
+   #+BEGIN_SRC shell
+     bundle --trust-policy MediumSecurity
+   #+END_SRC
+
+*** Why MediumSecurity?
+
+    =MediumSecurity= requires valid signatures on *signed* gems, but allows
+    unsigned dependencies. =cloudstrap-azure= has several dependencies, and not
+    all of them are signed. Using =HighSecurity= will fail unless *all*
+    dependencies are signed.
+
+*** Trusting the signing certificate
+
+    A copy of the public key is included in the repository for verification.
+    Assuming you've cloned the repository to =./cloudstrap-azure=, you can add
+    it to your list of trusted keys like so:
+
+    #+BEGIN_SRC shell
+      gem cert --add ./cloudstrap-azure/trust/certificates/colstrom.cert.pem
+    #+END_SRC
+
+    You can also fetch the key directly from GitHub.
+
+    For modern shells like =fish=, use the following:
+
+    #+BEGIN_SRC shell
+      gem cert --add (curl -s https://raw.githubusercontent.com/colstrom/cloudstrap-azure/master/trust/certificates/colstrom.cert.pem | psub)
+    #+END_SRC
+
+    For vintage shells like =bash=, use the following:
+
+    #+BEGIN_SRC shell
+      gem cert add <(curl -s https://raw.githubusercontent.com/colstrom/cloudstrap-azure/master/trust/certificates/colstrom.cert.pem)
+    #+END_SRC
+
 * Commands
 
 ** cloudstrap-azure environment
