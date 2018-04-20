@@ -1,13 +1,134 @@
 #! /usr/bin/env ruby
 # -*- ruby -*-
 
+require 'optparse' # Ruby Standard Library
+
+require 'pastel'     # MIT License
+
+#############
+# Constants #
+#############
+
+INTERNAL_COMMAND_PATH   = File.expand_path(File.join(__dir__, 'internal'))
+LICENSE_FILE            = File.expand_path(File.join(__dir__, '..', 'LICENSE.txt'))
+PROGRAM                 = File.basename($PROGRAM_NAME)
+SPDX_LICENSE_IDENTIFIER = 'MIT'
+
+####################
+# Helper Functions #
+####################
+
+Bold              = ->(string)  { Pastel.new.bold(string) }
+Red               = ->(string)  { Pastel.new.red(string) }
+ExitAfterPrinting = ->(message) { puts(message); exit }
+
+def commands
+  if RUBY_VERSION >= '2.5.0'
+    Dir.children(INTERNAL_COMMAND_PATH)
+  else
+    Dir.entries(INTERNAL_COMMAND_PATH).reject do |entry|
+      %w(. ..).include? entry
+    end
+  end.map do |command|
+    command.gsub Regexp.new("^#{PROGRAM}."), ''
+  end
+end
+
+###################
+# Option Handling #
+###################
+
+options = {}
+
+OptionParser.new do |opts|
+  opts.banner = "#{PROGRAM} [options] <command>"
+  opts.on('--available-commands')        { ExitAfterPrinting.(commands) }
+  opts.on('--guide') do
+    ExitAfterPrinting.("
+Welcome to #{Bold.(PROGRAM)}!
+
+This program automates Azure Container Service deployments.
+
+The first thing you should do is log in to Azure (this only needs to be done
+once under normal operating conditions):
+
+#{Bold.('az login')}
+
+Once you have successfully logged in, you can use the #{Bold.('environment')}
+command to get a fresh set of tokens at any time. Given no arguments, this will
+print some JSON to STDOUT that includes access tokens. This is intended for use
+in scripts.
+
+#{Bold.(PROGRAM + ' environment')}
+
+If you provide additional arguments to the #{Bold.('environment')} command, the
+access tokens will be added to the environment, and the program
+will #{Bold.('exec')} into the remaining arguments. This is intended for
+programs that read from environment.
+
+#{Bold.(PROGRAM + ' environment -- env')}
+
+The rest of #{Bold.(PROGRAM)} assumes that access tokens will be available in
+the environment.
+
+The next step is to configure #{Bold.(PROGRAM)}! The #{Bold.('configure')}
+command provides a simple way to do this interactively. This is generally a
+one-time process, but you can safely run it multiple times. It will read the
+current configuration and only change the things you tell it to.
+
+#{Bold.(PROGRAM + ' environment -- ' + PROGRAM + ' configure')}
+
+Once the program is configured, it's time to deploy things!
+The #{Bold.('deploy')} command takes care of this. Like #{Bold.('configure')},
+it is safe to run multiple times.
+
+#{Bold.(PROGRAM + ' environment -- ' + PROGRAM + ' deploy')}
+
+That's it! If you've made it this far, you should have a working ACS deployment.
+
+Thanks for using #{Bold.(PROGRAM)}!
+
+")
+  end
+
+  opts.on('--workaround-linux-shebang-limitations') do
+    # https://lists.gnu.org/archive/html/bug-sh-utils/2002-04/msg00020.html
+    options[:workaround_linux_shebang_limitations] = true
+  end
+  opts.on('--spdx-license-identifier') { ExitAfterPrinting.(SPDX_LICENSE_IDENTIFIER) }
+  opts.on('--full-license-text')         { ExitAfterPrinting.(File.read(LICENSE_FILE) + "\n") }
+end.parse!
+
+#################
+# Sanity Checks #
+#################
+
+exit Errno::EINVAL::Errno if ARGV.empty?
+
+options[:workaround_linux_shebang_limitations] ||= (RbConfig::CONFIG['arch'] =~ /linux/) ? true : false
+
+################
+# Main Program #
+################
+
+COMMAND = ARGV.shift
+
 PATH = ENV['PATH'] = [
-  File.expand_path(File.join(__dir__, 'internal')),
+  INTERNAL_COMMAND_PATH,
   ENV['PATH']
 ].join(':')
 
-PROGRAM = File.basename($PROGRAM_NAME)
+begin
+  if options[:workaround_linux_shebang_limitations]
+    INTERNAL_COMMAND = File.join(INTERNAL_COMMAND_PATH, "#{PROGRAM}.#{COMMAND}")
+    raise Errno::ENOENT unless File.exist? INTERNAL_COMMAND
+    exec(RbConfig.ruby, '-W0', INTERNAL_COMMAND)
+  else
+    exec({ 'PATH' => PATH }, "#{PROGRAM}.#{COMMAND}", *ARGV)
+  end
 
-abort unless (COMMAND = ARGV.shift)
-
-exec({ 'PATH' => PATH }, "#{PROGRAM}.#{COMMAND}", *ARGV)
+rescue Errno::ENOENT
+  STDERR.puts Red.("#{Bold.(COMMAND)} does not seem to be a valid command. Try this:\n")
+  STDERR.puts Bold.("#{PROGRAM} --available-commands\n")
+  exit Errno::ENOENT::Errno
+end
