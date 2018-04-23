@@ -96,7 +96,7 @@ Thanks for using #{Bold.(PROGRAM)}!
     options[:workaround_linux_shebang_limitations] = true
   end
   opts.on('--spdx-license-identifier') { ExitAfterPrinting.(SPDX_LICENSE_IDENTIFIER) }
-  opts.on('--full-license-text')         { ExitAfterPrinting.(File.read(LICENSE_FILE) + "\n") }
+  opts.on('--full-license-text')       { ExitAfterPrinting.(File.read(LICENSE_FILE) + "\n") }
 end.parse!
 
 #################
@@ -122,7 +122,7 @@ begin
   if options[:workaround_linux_shebang_limitations]
     INTERNAL_COMMAND = File.join(INTERNAL_COMMAND_PATH, "#{PROGRAM}.#{COMMAND}")
     raise Errno::ENOENT unless File.exist? INTERNAL_COMMAND
-    exec(RbConfig.ruby, '-W0', INTERNAL_COMMAND)
+    exec(RbConfig.ruby, '-W0', INTERNAL_COMMAND, *ARGV)
   else
     exec({ 'PATH' => PATH }, "#{PROGRAM}.#{COMMAND}", *ARGV)
   end
