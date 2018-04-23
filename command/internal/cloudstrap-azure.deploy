@@ -470,7 +470,7 @@ network_security_group = WhileSpinning.('Find Network Security Group')   { Kuber
 security_rule          = WhileSpinning.('Find/Create Security Rule')     { FindSecurityRule.(network_security_group)        || CreateSecurityRule.(network_security_group, resource_group) }
 
 network_interface      = WhileSpinning.('Find Network Interface')        { FindNetworkInterface.(resource_group) }
-AssociatePublicIP.(resource_group, network_interface, public_ip_address)
+WhileSpinning.('Associate Public IP') { AssociatePublicIP.(resource_group, network_interface, public_ip_address) }
 
 WhileSpinning.('Configuring Swap Accounting') do
   KubernetesAgents
