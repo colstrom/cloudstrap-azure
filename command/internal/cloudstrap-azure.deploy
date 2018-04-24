@@ -164,6 +164,14 @@ ParameterChunks = ->(string) {
   1.upto(chunks.length).map { |n|
     [chunks.take(n).map(&:capitalize).join, chunks.drop(n).join('_')]}}
 
+WhatProvides = ->(parameter) {
+  parameter_chunks = ParameterChunks.(parameter)
+  Constants.(AzureAPI)
+    .select { |constant|constant.name =~ /::Models::/ }
+    .select { |constant| constant.is_a? Class }
+    .select { |model| parameter_chunks.any? { |class_name, instance_method_name|
+                (OwnClass.(model) == class_name) and model.instance_methods.include?(instance_method_name.to_sym)}}}
+
 BindOperation = ->(namespace, operation) {
   constant = FormatMethodName.(operation)
   namespace.const_set(constant, operation)
