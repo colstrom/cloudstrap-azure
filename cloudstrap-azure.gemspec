@@ -30,6 +30,7 @@ Gem::Specification.new do |gem|
   gem.add_runtime_dependency 'chamber',                      '~> 2.12', '>= 2.12.0'
   gem.add_runtime_dependency 'chronic',                      '~> 0.10', '>= 0.10.0'
   gem.add_runtime_dependency 'concurrent-ruby',              '~> 1.0',  '>= 1.0.5'
+  gem.add_runtime_dependency 'facets',                       '~> 3.1',  '>= 3.1.0'
   gem.add_runtime_dependency 'pastel',                       '~> 0.7',  '>= 0.7.0'
   gem.add_runtime_dependency 'sshkey',                       '~> 1.9',  '>= 1.9.0'
   gem.add_runtime_dependency 'tty-prompt',                   '~> 0.16', '>= 0.16.0'
