@@ -159,6 +159,11 @@ UsageError = ->(method, exception) {
     Blue.("#{Bold.('Usage')}: #{UsageHelp.(method)}"))
 }
 
+ParameterChunks = ->(string) {
+  chunks = string.snakecase.split('_')
+  1.upto(chunks.length).map { |n|
+    [chunks.take(n).map(&:capitalize).join, chunks.drop(n).join('_')]}}
+
 BindOperation = ->(namespace, operation) {
   constant = FormatMethodName.(operation)
   namespace.const_set(constant, operation)
