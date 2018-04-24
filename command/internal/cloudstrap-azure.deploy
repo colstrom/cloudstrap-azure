@@ -222,112 +222,125 @@ BindTenantID       = Bind.(:tenant_id, TENANT_ID)
 ########################
 
 FindResourceGroup = ->(name) {
-  AzureAPI::Resources::ResourceGroups
-    .list
-    .find { |resource_group| resource_group.id == "/subscriptions/#{SUBSCRIPTION_ID}/resourceGroups/#{name}" }}
+  WhileSpinning.("Resource Group Exists", report: :name) {
+    AzureAPI::Resources::ResourceGroups
+      .list
+      .find { |resource_group| resource_group.id == "/subscriptions/#{SUBSCRIPTION_ID}/resourceGroups/#{name}" }}}
 
 CreateResourceGroup = ->(name) {
-  AzureAPI::Resources::ResourceGroups.create_or_update(
-    name,
-    AzureAPI::Resources::Models::ResourceGroup.new.tap do |resource_group|
-      resource_group.location = LOCATION
-    end)}
+  WhileSpinning.("Create Resource Group", report: :name) {
+    AzureAPI::Resources::ResourceGroups.create_or_update(
+      name,
+      AzureAPI::Resources::Models::ResourceGroup.new.tap do |resource_group|
+        resource_group.location = LOCATION
+      end)}}
 
 FindApplication = ->(display_name) {
-  AzureAPI::GraphRbac::Applications
-    .list
-    .find { |application| application.display_name == display_name }}
+  WhileSpinning.("Application Exists", report: :app_id) {
+    AzureAPI::GraphRbac::Applications
+      .list
+      .find { |application| application.display_name == display_name }}}
 
 CreateApplication = ->(display_name) {
-  AzureAPI::GraphRbac::Applications.create(
-    AzureAPI::GraphRbac::Models::ApplicationCreateParameters.new.tap do |application|
-      application.available_to_other_tenants = false
-      application.display_name               = display_name
-      application.identifier_uris            = ["http://#{display_name}"]
-    end)}
+  WhileSpinning.("Create Application", report: :app_id) {
+    AzureAPI::GraphRbac::Applications.create(
+      AzureAPI::GraphRbac::Models::ApplicationCreateParameters.new.tap do |application|
+        application.available_to_other_tenants = false
+        application.display_name               = display_name
+        application.identifier_uris            = ["http://#{display_name}"]
+      end)}}
 
 FindServicePrincipal = ->(application) {
-  AzureAPI::GraphRbac::ServicePrincipals
-    .list
-    .find { |service_principal| service_principal.app_id == application.app_id }}
+  WhileSpinning.("Service Principal Exists", report: :object_id) {
+    AzureAPI::GraphRbac::ServicePrincipals
+      .list
+      .find { |service_principal| service_principal.app_id == application.app_id }}}
 
 CreateServicePrincipal = ->(application) {
-  AzureAPI::GraphRbac::ServicePrincipals.create(
-    AzureAPI::GraphRbac::Models::ServicePrincipalCreateParameters.new.tap do |service_principal|
-      service_principal.account_enabled = true
-      service_principal.app_id          = application.app_id
-    end)}
+  WhileSpinning.("Create Service Principal", report: :object_id) {
+    AzureAPI::GraphRbac::ServicePrincipals.create(
+      AzureAPI::GraphRbac::Models::ServicePrincipalCreateParameters.new.tap do |service_principal|
+        service_principal.account_enabled = true
+        service_principal.app_id          = application.app_id
+      end)}}
 
 FindRoleDefinition = ->(role_name) {
-  AzureAPI::Authorization::RoleDefinitions
-    .list("/subscriptions/#{SUBSCRIPTION_ID}")
-    .find { |role_definition| role_definition.role_name == role_name }}
+  WhileSpinning.("Role Definition Exists", report: :role_name) {
+    AzureAPI::Authorization::RoleDefinitions
+      .list("/subscriptions/#{SUBSCRIPTION_ID}")
+      .find { |role_definition| role_definition.role_name == role_name }}}
 
 FindRoleAssignment = ->(name) {
-  AzureAPI::Authorization::RoleAssignments
-    .list
-    .find { |role_assignment| role_assignment.name == name }}
+  WhileSpinning.("Role Assignment Exists", report: :name) {
+    AzureAPI::Authorization::RoleAssignments
+      .list
+      .find { |role_assignment| role_assignment.name == name }}}
 
 CreateRoleAssignment = ->(role_definition, service_principal, resource_group) {
-  AzureAPI::Authorization::RoleAssignments.create(
-    resource_group.id,
-    Chamber.env.uuid,
-    AzureAPI::Authorization::Models::RoleAssignmentCreateParameters.new.tap do |role_assignment|
-      role_assignment.role_definition_id = role_definition.id
-      role_assignment.principal_id       = service_principal.object_id
-    end)}
+  WhileSpinning.("Create Role Assignment", report: :name) {
+    AzureAPI::Authorization::RoleAssignments.create(
+      resource_group.id,
+      Chamber.env.uuid,
+      AzureAPI::Authorization::Models::RoleAssignmentCreateParameters.new.tap do |role_assignment|
+        role_assignment.role_definition_id = role_definition.id
+        role_assignment.principal_id       = service_principal.object_id
+      end)}}
 
 UpdatePassword = ->(service_principal, password) {
-  AzureAPI::GraphRbac::ServicePrincipals.update_password_credentials(
-    service_principal.object_id,
-    AzureAPI::GraphRbac::Models::PasswordCredentialsUpdateParameters.new.tap { |update|
-      update.value = [AzureAPI::GraphRbac::Models::PasswordCredential.new.tap { |credential|
-                        credential.value    = password
-                        credential.end_date = Time.parse(
-                          Chamber.env.credential_end_date).to_datetime}]})}
+  WhileSpinning.("Update Password") {
+    AzureAPI::GraphRbac::ServicePrincipals.update_password_credentials(
+      service_principal.object_id,
+      AzureAPI::GraphRbac::Models::PasswordCredentialsUpdateParameters.new.tap { |update|
+        update.value = [AzureAPI::GraphRbac::Models::PasswordCredential.new.tap { |credential|
+                          credential.value    = password
+                          credential.end_date = Time.parse(
+                            Chamber.env.credential_end_date).to_datetime}]})
+    true}}
 
 FindContainerService = ->(resource_group) {
-  AzureAPI::ContainerService::ContainerServices
-    .list_by_resource_group(resource_group.name)
-    .find { |container_service| container_service.name == Chamber.env.identifier }}
+  WhileSpinning.("Container Service Exists", report: :name) {
+    AzureAPI::ContainerService::ContainerServices
+      .list_by_resource_group(resource_group.name)
+      .find { |container_service| container_service.name == Chamber.env.identifier }}}
 
 CreateContainerService = ->(service_principal, resource_group) {
-  AzureAPI::ContainerService::ContainerServices.create_or_update(
-    resource_group.name,
-    Chamber.env.identifier,
-    AzureAPI::ContainerService::Models::ContainerService.new.tap { |container_service|
-      container_service.agent_pool_profiles = [
-        AzureAPI::ContainerService::Models::ContainerServiceAgentPoolProfile.new.tap { |agent_pool_profile|
-          agent_pool_profile.count = (
-            Chamber.env.agent_count)
-          agent_pool_profile.dns_prefix = (
-            [Chamber.env.dns_prefix, Chamber.env.agent_dns_suffix]
-              .join('-'))
-          agent_pool_profile.name = (
-            Chamber.env.identifier)
-          agent_pool_profile.vm_size = (
-            Chamber.env.vm_size)}]
-      container_service.linux_profile = (
-        AzureAPI::ContainerService::Models::ContainerServiceLinuxProfile.new.tap { |linux_profile|
-          linux_profile.admin_username = (
-            Chamber.env.admin_username)
-          linux_profile.ssh = (
-            AzureAPI::ContainerService::Models::ContainerServiceSshConfiguration.new.tap { |ssh|
-              ssh.public_keys = [
-                AzureAPI::ContainerService::Models::ContainerServiceSshPublicKey.new.tap { |public_key|
-                  public_key.key_data = (
-                    SSHKey.new(Chamber.env.ssh_private_key).ssh_public_key)}]})})
-      container_service.location       = Chamber.env.location
-      container_service.master_profile = (
-        AzureAPI::ContainerService::Models::ContainerServiceMasterProfile.new.tap { |master_profile|
-          master_profile.dns_prefix = [Chamber.env.dns_prefix, Chamber.env.master_dns_suffix].join('-')})
-      container_service.orchestrator_profile   = (
-        AzureAPI::ContainerService::Models::ContainerServiceOrchestratorProfile.new.tap { |orchestrator_profile|
-          orchestrator_profile.orchestrator_type = Chamber.env.orchestrator_type})
-      container_service.service_principal_profile = (
-        AzureAPI::ContainerService::Models::ContainerServiceServicePrincipalProfile.new.tap { |service_principal_profile|
-          service_principal_profile.client_id = service_principal.app_id
-          service_principal_profile.secret    = Chamber.env.password})})}
+  WhileSpinning.("Create Container Service", report: :name) {
+    AzureAPI::ContainerService::ContainerServices.create_or_update(
+      resource_group.name,
+      Chamber.env.identifier,
+      AzureAPI::ContainerService::Models::ContainerService.new.tap { |container_service|
+        container_service.agent_pool_profiles = [
+          AzureAPI::ContainerService::Models::ContainerServiceAgentPoolProfile.new.tap { |agent_pool_profile|
+            agent_pool_profile.count = (
+              Chamber.env.agent_count)
+            agent_pool_profile.dns_prefix = (
+              [Chamber.env.dns_prefix, Chamber.env.agent_dns_suffix]
+                .join('-'))
+            agent_pool_profile.name = (
+              Chamber.env.identifier)
+            agent_pool_profile.vm_size = (
+              Chamber.env.vm_size)}]
+        container_service.linux_profile = (
+          AzureAPI::ContainerService::Models::ContainerServiceLinuxProfile.new.tap { |linux_profile|
+            linux_profile.admin_username = (
+              Chamber.env.admin_username)
+            linux_profile.ssh = (
+              AzureAPI::ContainerService::Models::ContainerServiceSshConfiguration.new.tap { |ssh|
+                ssh.public_keys = [
+                  AzureAPI::ContainerService::Models::ContainerServiceSshPublicKey.new.tap { |public_key|
+                    public_key.key_data = (
+                      SSHKey.new(Chamber.env.ssh_private_key).ssh_public_key)}]})})
+        container_service.location       = Chamber.env.location
+        container_service.master_profile = (
+          AzureAPI::ContainerService::Models::ContainerServiceMasterProfile.new.tap { |master_profile|
+            master_profile.dns_prefix = [Chamber.env.dns_prefix, Chamber.env.master_dns_suffix].join('-')})
+        container_service.orchestrator_profile   = (
+          AzureAPI::ContainerService::Models::ContainerServiceOrchestratorProfile.new.tap { |orchestrator_profile|
+            orchestrator_profile.orchestrator_type = Chamber.env.orchestrator_type})
+        container_service.service_principal_profile = (
+          AzureAPI::ContainerService::Models::ContainerServiceServicePrincipalProfile.new.tap { |service_principal_profile|
+            service_principal_profile.client_id = service_principal.app_id
+            service_principal_profile.secret    = Chamber.env.password})})}}
 
 FindVirtualMachines = ->(resource_group) {
   AzureAPI::Compute::VirtualMachines
@@ -364,46 +377,50 @@ RunShellScript = ->(script, *rest) { RunShellScripts.([script], *rest) }
 RestartVirtualMachine = ->(resource_group, virtual_machine) { AzureAPI::Compute::VirtualMachines.restart(resource_group.name, virtual_machine.name) }.curry
 
 FindPublicIPv4 = ->(resource_group) {
-  AzureAPI::Network::PublicIpaddresses
-    .list(resource_group.name)
-    .find { |public_ip_address| public_ip_address.name == Chamber.env.identifier }}
+  WhileSpinning.("Public IPv4 Exists", report: :ip_address) {
+    AzureAPI::Network::PublicIpaddresses
+      .list(resource_group.name)
+      .find { |public_ip_address| public_ip_address.name == Chamber.env.identifier }}}
 
 CreatePublicIPv4 = ->(resource_group) {
-  AzureAPI::Network::PublicIpaddresses.create_or_update(
-    resource_group.name,
-    Chamber.env.identifier,
-    AzureAPI::Network::Models::PublicIPAddress.new.tap { |public_ip_address|
-      public_ip_address.location                   = Chamber.env.location
-      public_ip_address.public_ipaddress_version   = 'IPv4'
-      public_ip_address.public_ipallocation_method = 'Static'
-    })}
+  WhileSpinning.("Create Public IPv4", report: :ip_address) {
+    AzureAPI::Network::PublicIpaddresses.create_or_update(
+      resource_group.name,
+      Chamber.env.identifier,
+      AzureAPI::Network::Models::PublicIPAddress.new.tap { |public_ip_address|
+        public_ip_address.location                   = Chamber.env.location
+        public_ip_address.public_ipaddress_version   = 'IPv4'
+        public_ip_address.public_ipallocation_method = 'Static'
+      })}}
 
 KubernetesMasterSecurityGroup = ->(resource_group) {
   name = [*KubernetesMaster.(resource_group).name.split('-').first(3), 'nsg'].join('-')
-  AzureAPI::Network::NetworkSecurityGroups
-    .list(resource_group.name)
-    .find { |network_security_group| network_security_group.name == name }}
+  WhileSpinning.("Network Security Group Exists", report: :name) {
+    AzureAPI::Network::NetworkSecurityGroups
+      .list(resource_group.name)
+      .find { |network_security_group| network_security_group.name == name }}}
 
 FindSecurityRule = ->(network_security_group) {
-  network_security_group
-    .security_rules
-    .find { |security_rule| security_rule.name == Chamber.env.identifier }
-}
+  WhileSpinning.("Security Rule Exists", report: :name) {
+    network_security_group
+      .security_rules
+      .find { |security_rule| security_rule.name == Chamber.env.identifier }}}
 
 CreateSecurityRule = ->(network_security_group, resource_group) {
-  AzureAPI::Network::SecurityRules.create_or_update(
-    resource_group.name,
-    network_security_group.name,
-    Chamber.env.identifier,
-    AzureAPI::Network::Models::SecurityRule.new.tap { |security_rule|
-      security_rule.access                     = 'Allow'
-      security_rule.destination_address_prefix = '*'
-      security_rule.destination_port_ranges    = [80,443,4443,2222,2793]
-      security_rule.direction                  = AzureAPI::Network::Models::SecurityRuleDirection::Inbound
-      security_rule.priority                   = network_security_group.security_rules.map(&:priority).max.next
-      security_rule.protocol                   = 'Tcp'
-      security_rule.source_address_prefix      = '*'
-      security_rule.source_port_range          = '*'})}
+  WhileSpinning.("Create Security Rule", report: :name) {
+    AzureAPI::Network::SecurityRules.create_or_update(
+      resource_group.name,
+      network_security_group.name,
+      Chamber.env.identifier,
+      AzureAPI::Network::Models::SecurityRule.new.tap { |security_rule|
+        security_rule.access                     = 'Allow'
+        security_rule.destination_address_prefix = '*'
+        security_rule.destination_port_ranges    = [80,443,4443,2222,2793]
+        security_rule.direction                  = AzureAPI::Network::Models::SecurityRuleDirection::Inbound
+        security_rule.priority                   = network_security_group.security_rules.map(&:priority).max.next
+        security_rule.protocol                   = 'Tcp'
+        security_rule.source_address_prefix      = '*'
+        security_rule.source_port_range          = '*'})}}
 
 UpdateVirtualMachine = ->(virtual_machine, resource_group) {
   AzureAPI::Compute::VirtualMachines.create_or_update(
@@ -412,31 +429,36 @@ UpdateVirtualMachine = ->(virtual_machine, resource_group) {
     virtual_machine)}
 
 ApplyTag = ->(key, value, resource_group, virtual_machine) {
-  UpdateVirtualMachine.(virtual_machine.tap { virtual_machine.tags[key] = value }, resource_group)}
+  WhileSpinning.("Apply Tag #{key}=#{value} to #{virtual_machine.name}") {
+    UpdateVirtualMachine.(virtual_machine.tap { virtual_machine.tags[key] = value }, resource_group)}}
 
 EnableSwapAccounting = ->(resource_group, virtual_machine) {
   return if virtual_machine.tags['cloudstrap.swap_accounting'] == 'enabled'
-  RunShellScripts.([ENABLE_SWAP_ACCOUNTING, UPDATE_GRUB], resource_group, virtual_machine)
+  WhileSpinning.("Enable Swap Accounting on #{virtual_machine.name}") {
+    RunShellScripts.([ENABLE_SWAP_ACCOUNTING, UPDATE_GRUB], resource_group, virtual_machine)}
   ApplyTag.('cloudstrap.swap_accounting', 'enabled', resource_group, virtual_machine)}.curry
 
 RebootOnce = ->(resource_group, virtual_machine) {
   return if virtual_machine.tags['cloudstrap.reboot'] == 'finished'
   ApplyTag.('cloudstrap.reboot', 'started', resource_group, virtual_machine)
-  RestartVirtualMachine.(resource_group, virtual_machine)
+  WhileSpinning.("Reboot Virtual Machine #{virtual_machine.name}") {
+    RestartVirtualMachine.(resource_group, virtual_machine)}
   ApplyTag.('cloudstrap.reboot', 'finished', resource_group, virtual_machine)}.curry
 
 FindNetworkInterface = ->(resource_group) {
-  virtual_machine = KubernetesAgents.(resource_group).sort_by(&:name).first
-  AzureAPI::Network::NetworkInterfaces
-    .list(resource_group.name)
-    .find { |network_interface| network_interface.virtual_machine.id.end_with?(virtual_machine.name)}}
+  WhileSpinning.("Network Interface Exists", report: :name) {
+    virtual_machine = KubernetesAgents.(resource_group).sort_by(&:name).first
+    AzureAPI::Network::NetworkInterfaces
+      .list(resource_group.name)
+      .find { |network_interface| network_interface.virtual_machine.id.end_with?(virtual_machine.name)}}}
 
 AssociatePublicIP = ->(resource_group, network_interface, public_ip_address) {
-  AzureAPI::Network::NetworkInterfaces.create_or_update(
-    resource_group.name,
-    network_interface.name,
-    network_interface.tap {
-      network_interface.ip_configurations[0].public_ipaddress = public_ip_address})}
+  WhileSpinning.("Associate Public IPv4") {
+    AzureAPI::Network::NetworkInterfaces.create_or_update(
+      resource_group.name,
+      network_interface.name,
+      network_interface.tap {
+        network_interface.ip_configurations[0].public_ipaddress = public_ip_address})}}
 
 ################
 # Main Program #
@@ -459,29 +481,28 @@ WhileSpinning.('Constructing Library') do
   AddInteractiveCalls.(AzureAPI)
 end
 
-role_definition        = WhileSpinning.('Find Role Definition')          { FindRoleDefinition.(Chamber.env.role_definition) }
-resource_group         = WhileSpinning.('Find/Create Resource Group')    { FindResourceGroup.(Chamber.env.identifier)       || CreateResourceGroup.(Chamber.env.identifier) }
-application            = WhileSpinning.('Find/Create Application')       { FindApplication.(Chamber.env.identifier)         || CreateApplication.(Chamber.env.identifier) }
-service_principal      = WhileSpinning.('Find/Create Service Principal') { FindServicePrincipal.(application)               || CreateServicePrincipal.(application) }
 
-WhileSpinning.('Update Password for Service Principal')                  { UpdatePassword.(service_principal, Chamber.env.password) }
+application            = FindApplication.(Chamber.env.identifier)         || CreateApplication.(Chamber.env.identifier)
+service_principal      = FindServicePrincipal.(application)               || CreateServicePrincipal.(application)
+role_definition        = FindRoleDefinition.(Chamber.env.role_definition)
+resource_group         = FindResourceGroup.(Chamber.env.identifier)       || CreateResourceGroup.(Chamber.env.identifier)
 
-role_assignment        = WhileSpinning.('Find/Create Role Assignment')   { FindRoleAssignment.(Chamber.env.uuid)            || CreateRoleAssignment.(role_definition, service_principal, resource_group) }
-public_ip_address      = WhileSpinning.('Find/Create Public IP Address') { FindPublicIPv4.(resource_group)                  || CreatePublicIPv4.(resource_group) }
-container_service      = WhileSpinning.('Find/Create Container Service') { FindContainerService.(resource_group)            || CreateContainerService.(service_principal, resource_group) }
+UpdatePassword.(service_principal, Chamber.env.password)
 
-network_security_group = WhileSpinning.('Find Network Security Group')   { KubernetesMasterSecurityGroup.(resource_group) }
-security_rule          = WhileSpinning.('Find/Create Security Rule')     { FindSecurityRule.(network_security_group)        || CreateSecurityRule.(network_security_group, resource_group) }
+role_assignment        = FindRoleAssignment.(Chamber.env.uuid)            || CreateRoleAssignment.(role_definition, service_principal, resource_group)
 
-network_interface      = WhileSpinning.('Find Network Interface')        { FindNetworkInterface.(resource_group) }
-WhileSpinning.('Associate Public IP') { AssociatePublicIP.(resource_group, network_interface, public_ip_address) }
+public_ip_address      = FindPublicIPv4.(resource_group)                  || CreatePublicIPv4.(resource_group)
+container_service      = FindContainerService.(resource_group)            || CreateContainerService.(service_principal, resource_group)
 
-WhileSpinning.('Configuring Swap Accounting') do
-  KubernetesAgents
-    .(resource_group)
-    .each(&EnableSwapAccounting.(resource_group))
-    .each(&RebootOnce.(resource_group))
-end
+network_security_group = KubernetesMasterSecurityGroup.(resource_group)
+security_rule          = FindSecurityRule.(network_security_group)        || CreateSecurityRule.(network_security_group, resource_group)
+network_interface      = FindNetworkInterface.(resource_group)
+association            = AssociatePublicIP.(resource_group, network_interface, public_ip_address)
+
+KubernetesAgents
+  .(resource_group)
+  .each(&EnableSwapAccounting.(resource_group))
+  .each(&RebootOnce.(resource_group))
 
 def api(*args)
   AzureAPI.call(*args)
