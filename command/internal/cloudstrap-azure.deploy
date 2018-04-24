@@ -461,6 +461,20 @@ AssociatePublicIP = ->(resource_group, network_interface, public_ip_address) {
       network_interface.tap {
         network_interface.ip_configurations[0].public_ipaddress = public_ip_address})}}
 
+Purge = -> {
+  if resource_group = FindResourceGroup.(Chamber.env.identifier)
+    WhileSpinning.('Purge Resources') {
+      AzureAPI::Resource::ResourceGroups.delete(resource_group.name)}
+  end
+  if application = FindApplication.(Chamber.env.identifier)
+    if service_principal = FindServicePrincipal.(application)
+      WhileSpinning.('Purge Service Principal') {
+        AzureAPI::GraphRbac::ServicePrincipals.delete(service_principal.object_id)}
+    end
+    WhileSpinning.('Purge Application') {
+      AzureAPI::GraphRbac::Applications.delete(application.object_id)}
+  end}
+
 ################
 # Main Program #
 ################
