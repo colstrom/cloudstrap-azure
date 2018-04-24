@@ -35,6 +35,7 @@ TENANT_ID       = Chamber.env.tenant_id
 LOCATION        = Chamber.env.location
 
 SPINNER_FORMAT  = (Chamber.env[:spinner] || :arrow_pulse).to_sym
+ARBITRARY_DELAY = (Chamber.env[:arbitrary_delay] || 10).to_i
 
 ENABLE_SWAP_ACCOUNTING = %q{sudo sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT=\"console=tty1 console=ttyS0 earlyprintk=ttyS0 rootdelay=300\"/GRUB_CMDLINE_LINUX_DEFAULT=\"console=tty1 console=ttyS0 earlyprintk=ttyS0 rootdelay=300 swapaccount=1\"/g' /etc/default/grub.d/50-cloudimg-settings.cfg}
 UPDATE_GRUB = %q{sudo update-grub}
@@ -489,7 +490,9 @@ resource_group         = FindResourceGroup.(Chamber.env.identifier)       || Cre
 
 UpdatePassword.(service_principal, Chamber.env.password)
 
-role_assignment        = FindRoleAssignment.(Chamber.env.uuid)            || CreateRoleAssignment.(role_definition, service_principal, resource_group)
+role_assignment        = FindRoleAssignment.(Chamber.env.uuid) || (
+  WhileSpinning.("Arbitrary Delay of #{ARBITRARY_DELAY} Seconds") { sleep ARBITRARY_DELAY }
+  CreateRoleAssignment.(role_definition, service_principal, resource_group))
 
 public_ip_address      = FindPublicIPv4.(resource_group)                  || CreatePublicIPv4.(resource_group)
 container_service      = FindContainerService.(resource_group)            || CreateContainerService.(service_principal, resource_group)
