@@ -184,6 +184,15 @@ WhatAccepts = lambda do |object|
   end.group_by(&:owner).map { |owner, methods| [owner, methods.map(&:name)] }.to_h
 end
 
+UsageSummary = ->(object) {
+  WhatAccepts.(object).flat_map { |service, methods|
+    methods.map { |method| [
+                    "#{AzureServiceName.(service)}::#{OwnClass.(service)}",
+                    UsageHelp.(service.instance_method(method))]}}
+    .sort_by(&:last)
+    .sort_by(&:first)
+    .map { |service, operation| "#{service}##{operation}"}}
+
 BindOperation = ->(namespace, operation) {
   constant = FormatMethodName.(operation)
   namespace.const_set(constant, operation)
