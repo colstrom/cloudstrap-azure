@@ -138,7 +138,7 @@ Red  = ->(string) { Pastel.new.red(string) }
 Blue = ->(string) { Pastel.new.blue(string) }
 
 UsageHelp = ->(method) {
-    [method.name,
+    [(method.respond_to?(:name) ? method.name : 'λ'),
      method.parameters.map do |type, name|
        case type
        when :req    then "<#{name}>"
