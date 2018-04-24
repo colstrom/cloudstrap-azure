@@ -493,7 +493,7 @@ Purge = -> {
 # Main Program #
 ################
 
-WhileSpinning.('Constructing Library') do
+SERVICES = WhileSpinning.('Constructing Library') do
   AzureAPI = Module.new
   Constants
     .(Azure)
@@ -506,10 +506,8 @@ WhileSpinning.('Constructing Library') do
     .map(&ApplyIf.(Bindable.(:tenant_id),       BindTenantID))
     .map(&ApplyIf.(Bindable.(:subscription_id), BindSubscriptionID))
     .each(&BindService.(AzureAPI))
-
-  AddInteractiveCalls.(AzureAPI)
+    .tap { AddInteractiveCalls.(AzureAPI) }
 end
-
 
 application            = FindApplication.(Chamber.env.identifier)         || CreateApplication.(Chamber.env.identifier)
 service_principal      = FindServicePrincipal.(application)               || CreateServicePrincipal.(application)
