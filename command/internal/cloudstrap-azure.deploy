@@ -172,6 +172,18 @@ WhatProvides = ->(parameter) {
     .select { |model| parameter_chunks.any? { |class_name, instance_method_name|
                 (OwnClass.(model) == class_name) and model.instance_methods.include?(instance_method_name.to_sym)}}}
 
+WhatAccepts = lambda do |object|
+  name = OwnClass.(object).snakecase
+  SERVICES
+    .flat_map(&MethodsReturningSiblings)
+    .map(&:call)
+    .flat_map(&AsyncableMethods).select do |method|
+    method.parameters.any? do |_, parameter|
+      parameter.to_s.start_with? name
+    end
+  end.group_by(&:owner).map { |owner, methods| [owner, methods.map(&:name)] }.to_h
+end
+
 BindOperation = ->(namespace, operation) {
   constant = FormatMethodName.(operation)
   namespace.const_set(constant, operation)
