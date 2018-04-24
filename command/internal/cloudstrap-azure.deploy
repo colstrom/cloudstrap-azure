@@ -61,12 +61,16 @@ If                 = ->(predicate, consequent, alternative = Nothing) {
     predicate.(*arguments) ? consequent.(*arguments) : alternative.(*arguments) } }
 ApplyIf            = ->(predicate, consequent) { If.(predicate, consequent, Itself) }
 
-WhileSpinning = lambda do |message, &block|
+LONGEST_MESSAGE = 30
+
+WhileSpinning = lambda do |message, report: nil, &block|
   Concurrent::IVar.new.tap do |ivar|
     TTY::Spinner.new("[:spinner] #{message}", format: SPINNER_FORMAT).tap do |spinner|
       spinner.auto_spin
       ivar.set block.call
-    end.success
+      padding = (' ' * [(LONGEST_MESSAGE - message.length), 0].max)
+      ivar.value ? (report ? spinner.success(padding + ivar.value.public_send(report).to_s) : spinner.success) : spinner.error
+    end
   end.value
 end
 
