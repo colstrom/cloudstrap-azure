@@ -13,6 +13,7 @@ require 'azure_mgmt_resources'         # MIT License
 require 'chamber'                      # MIT License
 require 'concurrent'                   # MIT License
 require 'facets/string/snakecase'      # BSD-2-Clause License
+require 'net/scp'                      # MIT License
 require 'pastel'                       # MIT License
 require 'sshkey'                       # MIT License
 require 'tty-prompt'                   # MIT License
