@@ -571,6 +571,8 @@ KubernetesAgents
   .each(&EnableSwapAccounting.(resource_group))
   .each(&RebootOnce.(resource_group))
 
+DownloadKubeConfig.(container_service, File.join(Dir.pwd, 'kubeconfig.yml'))
+
 def api(*args)
   AzureAPI.call(*args)
 end
