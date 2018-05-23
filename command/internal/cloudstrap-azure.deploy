@@ -505,6 +505,14 @@ AssociatePublicIP = ->(resource_group, network_interface, public_ip_address) {
       network_interface.tap {
         network_interface.ip_configurations[0].public_ipaddress = public_ip_address})}}
 
+DownloadKubeConfig = ->(container_service, filename) {
+  WhileSpinning.('Download .kube/config') do
+    Net::SCP.start(container_service.master_profile.fqdn, Chamber.env.admin_username, SSH_CONFIG) do |session|
+      session.download! "/home/#{Chamber.env.admin_username}/.kube/config", filename
+    end
+  end
+}
+
 Purge = -> {
   if resource_group = FindResourceGroup.(Chamber.env.identifier)
     WhileSpinning.('Purge Resources') {
