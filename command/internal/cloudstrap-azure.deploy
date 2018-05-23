@@ -41,21 +41,29 @@ ARBITRARY_DELAY = (Chamber.env[:arbitrary_delay] || 10).to_i
 ENABLE_SWAP_ACCOUNTING = %q{sudo sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT=\"console=tty1 console=ttyS0 earlyprintk=ttyS0 rootdelay=300\"/GRUB_CMDLINE_LINUX_DEFAULT=\"console=tty1 console=ttyS0 earlyprintk=ttyS0 rootdelay=300 swapaccount=1\"/g' /etc/default/grub.d/50-cloudimg-settings.cfg}
 UPDATE_GRUB = %q{sudo update-grub}
 
+SSH_CONFIG = {
+  encryption: 'aes256-ctr',
+  hmac:       'hmac-sha2-512',
+  kex:        'ecdh-sha2-nistp521',
+  key_data:   Chamber.env.ssh_private_key,
+  keys:       [],
+}
+
 ####################
 # Helper Functions #
 ####################
 
-Nothing            = ->(*)                      { nil }
-StateEnabled       = ->(object)                 { 'Enabled' == object.state }
-FirstIfOnly        = ->(list)                   { list.first if (1 == list.size) }
-Properties         = ->(*properties)            { ->(object) { properties.map(&Property).map { |ƒ| ƒ.(object) } } }
-SelectFromMenu     = ->(title, choices)         { TTY::Prompt.new.select(title, filter: true) { |menu| choices.each { |choice| menu.choice(*choice) }}}
-Property           = ->(property, object)       { object.public_send(property) if object.respond_to?(property) }.curry
-RespondsTo         = ->(method, object)         { object.respond_to?(method) }.curry
-SendTo             = ->(object, *args)          { object.public_send(*args) }.curry(2)
-Bind               = ->(name, value, object)    { object.tap { SendTo.(object, "#{name}=", value) } }.curry
-Bindable           = ->(name, object)           { RespondsTo.("#{name}=", object) }.curry
-BindConstant       = ->(namespace, name, value) { namespace.const_set name, value }.curry
+Nothing            = ->(*)                      { nil }                                                                                                 # DONE - Nothing
+StateEnabled       = ->(object)                 { 'Enabled' == object.state }                                                                           # HACK
+FirstIfOnly        = ->(list)                   { list.first if (1 == list.size) }                                                                      # DONE - IfOnly
+Properties         = ->(*properties)            { ->(object) { properties.map(&Property).map { |ƒ| ƒ.(object) } } }                                     # HACK
+SelectFromMenu     = ->(title, choices)         { TTY::Prompt.new.select(title, filter: true) { |menu| choices.each { |choice| menu.choice(*choice) }}} # DONE - SelectOne
+Property           = ->(property, object)       { object.public_send(property) if object.respond_to?(property) }.curry                                  # HACK
+RespondsTo         = ->(method, object)         { object.respond_to?(method) }.curry                                                                    # DONE - RespondTo
+SendTo             = ->(object, *args)          { object.public_send(*args) }.curry(2)                                                                  # DONE - SendTo
+Bind               = ->(name, value, object)    { object.tap { SendTo.(object, "#{name}=", value) } }.curry                                             # TODO
+Bindable           = ->(name, object)           { RespondsTo.("#{name}=", object) }.curry                                                               # TODO
+BindConstant       = ->(namespace, name, value) { namespace.const_set name, value }.curry                                                               # DONE - SetConstantOf
 BindConstants      = ->(namespace, interfaces)  { interfaces.map { |constant, function| BindConstant.(namespace, constant, function) } }.curry
 Itself             = ->(object) { object.itself }
 If                 = ->(predicate, consequent, alternative = Nothing) {
