@@ -22,7 +22,7 @@ Gem::Specification.new do |gem|
 
   gem.add_runtime_dependency 'azure_graph_rbac',             '~> 0.16', '>= 0.16.0'
   gem.add_runtime_dependency 'azure_mgmt_authorization',     '~> 0.17', '>= 0.17.0'
-  gem.add_runtime_dependency 'azure_mgmt_compute',           '~> 0.17', '>= 0.17.0', '< 0.17.1' # Temporary Workaround
+  gem.add_runtime_dependency 'azure_mgmt_compute',           '~> 0.17', '>= 0.17.0'
   gem.add_runtime_dependency 'azure_mgmt_container_service', '~> 0.16', '>= 0.16.0'
   gem.add_runtime_dependency 'azure_mgmt_network',           '~> 0.16', '>= 0.16.0'
   gem.add_runtime_dependency 'azure_mgmt_resources',         '~> 0.16', '>= 0.16.0'
