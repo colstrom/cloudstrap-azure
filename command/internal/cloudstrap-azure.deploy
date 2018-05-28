@@ -531,7 +531,7 @@ Purge = -> {
 # Main Program #
 ################
 
-::Azure::Compute::Mgmt.send(:remove_const, :V2018_04_01)
+::Azure::Compute::Mgmt.send(:remove_const, :V2018_04_01) if ::Azure::Compute::Mgmt.const_defined?(:V2018_04_01)
 
 SERVICES = WhileSpinning.('Constructing Library') do
   AzureAPI = Module.new
