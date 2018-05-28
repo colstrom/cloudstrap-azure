@@ -445,22 +445,22 @@ KubernetesMasterSecurityGroup = ->(resource_group) {
       .list(resource_group.name)
       .find { |network_security_group| network_security_group.name == name }}}
 
-FindSecurityRule = ->(network_security_group) {
-  WhileSpinning.("Security Rule Exists", report: :name) {
+FindSecurityRule = ->(network_security_group, port) {
+  WhileSpinning.("Security Rule Exists for Port #{port}", report: :name) {
     network_security_group
       .security_rules
-      .find { |security_rule| security_rule.name == Chamber.env.identifier }}}
+      .find { |security_rule| security_rule.name == "#{Chamber.env.identifier}-#{port}" }}}
 
-CreateSecurityRule = ->(network_security_group, resource_group) {
-  WhileSpinning.("Create Security Rule", report: :name) {
+CreateSecurityRule = ->(network_security_group, port, resource_group) {
+  WhileSpinning.("Create Security Rule for Port #{port}", report: :name) {
     AzureAPI::Network::SecurityRules.create_or_update(
       resource_group.name,
       network_security_group.name,
-      Chamber.env.identifier,
+      "#{Chamber.env.identifier}-#{port}",
       AzureAPI::Network::Models::SecurityRule.new.tap { |security_rule|
         security_rule.access                     = 'Allow'
         security_rule.destination_address_prefix = '*'
-        security_rule.destination_port_ranges    = [80,443,4443,2222,2793]
+        security_rule.destination_port_ranges    = [port]
         security_rule.direction                  = AzureAPI::Network::Models::SecurityRuleDirection::Inbound
         security_rule.priority                   = network_security_group.security_rules.map(&:priority).max.next
         security_rule.protocol                   = 'Tcp'
@@ -564,7 +564,14 @@ public_ip_address      = FindPublicIPv4.(resource_group)                  || Cre
 container_service      = FindContainerService.(resource_group)            || CreateContainerService.(service_principal, resource_group)
 
 network_security_group = KubernetesMasterSecurityGroup.(resource_group)
-security_rule          = FindSecurityRule.(network_security_group)        || CreateSecurityRule.(network_security_group, resource_group)
+
+security_rules = [80,443,4443,2222,2793].map do |port|
+  [
+    port,
+    (FindSecurityRule.(network_security_group, port) || CreateSecurityRule.(network_security_group = KubernetesMasterSecurityGroup.(resource_group), port, resource_group))
+  ]
+end.to_h
+
 network_interface      = FindNetworkInterface.(resource_group)
 association            = AssociatePublicIP.(resource_group, network_interface, public_ip_address)
 
