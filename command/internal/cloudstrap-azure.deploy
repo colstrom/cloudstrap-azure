@@ -516,7 +516,7 @@ DownloadKubeConfig = ->(container_service, filename) {
 Purge = -> {
   if resource_group = FindResourceGroup.(Chamber.env.identifier)
     WhileSpinning.('Purge Resources') {
-      AzureAPI::Resource::ResourceGroups.delete(resource_group.name)}
+      AzureAPI::Resources::ResourceGroups.delete(resource_group.name)}
   end
   if application = FindApplication.(Chamber.env.identifier)
     if service_principal = FindServicePrincipal.(application)
