@@ -527,6 +527,28 @@ Purge = -> {
       AzureAPI::GraphRbac::Applications.delete(application.object_id)}
   end}
 
+
+#################
+# Sanity Checks #
+#################
+
+if Time.parse(Chamber.env.credential_end_date) < Time.now
+  STDERR.puts Pastel.new.red.bold("Bad End Date for Credentials")
+
+  STDERR.puts(
+    Pastel.new.red("
+Credentials were configured to expire at #{Chamber.env.credential_end_date}
+
+This time has passed.
+
+Please choose a new credential end date during configuration:
+"))
+
+  STDERR.puts Pastel.new.bold("cloudstrap-azure environment -- cloudstrap-azure configure\n")
+
+  abort
+end
+
 ################
 # Main Program #
 ################
